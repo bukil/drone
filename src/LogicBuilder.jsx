@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
     ReactFlow,
     MiniMap,
@@ -7,18 +7,14 @@ import {
     useNodesState,
     useEdgesState,
     addEdge,
-    Panel,
     useReactFlow,
     ReactFlowProvider,
-    getOutgoers,
-    getIncomers,
-    getConnectedEdges
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { TriggerNode, ConditionNode, ActionNode } from './CustomNodes';
 import {
-    AlertTriangle, Play, Settings, Sliders, Battery, Map, Users,
-    CheckCircle2, XCircle, MousePointer2, Trash2
+    AlertTriangle, Play, Settings, Battery, Map, MapPin, Users,
+    MousePointer2, Trash2, Zap, Anchor, Radio, Shield, ArrowDownCircle
 } from 'lucide-react';
 
 const nodeTypes = {
@@ -60,7 +56,7 @@ function LogicBuilderContent() {
         density: 'low',    // 'high' | 'low'
     });
 
-    const { getNodes, getEdges } = useReactFlow();
+    const { screenToFlowPosition } = useReactFlow();
 
     // Handle Selection
     const onNodeClick = useCallback((_, node) => {
@@ -76,28 +72,51 @@ function LogicBuilderContent() {
     useEffect(() => {
         const checkConflicts = () => {
             const actionNodes = nodes.filter(n => n.type === 'action');
-            const hoverNodes = actionNodes.filter(n => n.data.actionType === 'hover').map(n => n.id);
-            const landNodes = actionNodes.filter(n => n.data.actionType === 'land').map(n => n.id);
-            const navigateNodes = actionNodes.filter(n => n.data.actionType === 'navigate').map(n => n.id);
+            const hoverNodes = actionNodes.filter(n => n.data.actionType === 'hover');
+            const landNodes = actionNodes.filter(n => n.data.actionType === 'land');
+            const navigateNodes = actionNodes.filter(n => n.data.actionType === 'navigate');
 
-            const sourcesWithHover = edges.filter(e => hoverNodes.includes(e.target)).map(e => e.source + e.sourceHandle);
-            const sourcesWithLand = edges.filter(e => landNodes.includes(e.target)).map(e => e.source + e.sourceHandle);
-            const sourcesWithNavigate = edges.filter(e => navigateNodes.includes(e.target)).map(e => e.source + e.sourceHandle);
+            const hoverIds = hoverNodes.map(n => n.id);
+            const landIds = landNodes.map(n => n.id);
+            const navigateIds = navigateNodes.map(n => n.id);
+
+            const sourcesWithHover = edges.filter(e => hoverIds.includes(e.target)).map(e => e.source + e.sourceHandle);
+            const sourcesWithLand = edges.filter(e => landIds.includes(e.target)).map(e => e.source + e.sourceHandle);
+            const sourcesWithNavigate = edges.filter(e => navigateIds.includes(e.target)).map(e => e.source + e.sourceHandle);
 
             const conflictHoverLand = sourcesWithHover.some(s => sourcesWithLand.includes(s));
             const conflictLandNavigate = sourcesWithLand.some(s => sourcesWithNavigate.includes(s));
 
+            let conflictingIds = [];
+            let conflictMsg = null;
+
             if (conflictHoverLand) {
-                setConflict("Conflicting Actions: Cannot 'Hover' and 'Land' simultaneously.");
+                conflictMsg = "Conflicting Actions: Cannot 'Hover' and 'Land' simultaneously.";
+                conflictingIds = [...hoverIds, ...landIds];
             } else if (conflictLandNavigate) {
-                setConflict("Conflicting Actions: Cannot 'Soft Landing' and 'Navigate' simultaneously.");
-            } else {
-                setConflict(null);
+                conflictMsg = "Conflicting Actions: Cannot 'Soft Landing' and 'Navigate' simultaneously.";
+                conflictingIds = [...landIds, ...navigateIds];
+            }
+
+            setConflict(conflictMsg);
+
+            // Update nodes with conflict state
+            // We only update if the state actually changes to avoid infinite loops
+            const hasChanged = nodes.some(n => {
+                const shouldHaveConflict = conflictingIds.includes(n.id);
+                return !!n.data.hasConflict !== shouldHaveConflict;
+            });
+
+            if (hasChanged) {
+                setNodes(nds => nds.map(n => ({
+                    ...n,
+                    data: { ...n.data, hasConflict: conflictingIds.includes(n.id) }
+                })));
             }
         };
 
         checkConflicts();
-    }, [nodes, edges]);
+    }, [nodes, edges, setNodes]);
 
     // Simulation Logic
     useEffect(() => {
@@ -176,7 +195,7 @@ function LogicBuilderContent() {
             }
         })));
 
-    }, [mode, simState, nodes.length, edges.length]); // Re-run when sim state changes
+    }, [mode, simState, nodes.length, edges.length, JSON.stringify(nodes.map(n => n.data.label))]);
 
     const onConnect = useCallback((params) => setEdges((eds) => addEdge(params, eds)), [setEdges]);
     const onDragOver = useCallback((event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }, []);
@@ -190,7 +209,11 @@ function LogicBuilderContent() {
 
             if (!type) return;
 
-            const position = { x: event.clientX - 300, y: event.clientY - 50 };
+            const position = screenToFlowPosition({
+                x: event.clientX,
+                y: event.clientY,
+            });
+
             const newNode = {
                 id: `${type}-${nodes.length + 1}`,
                 type,
@@ -199,7 +222,7 @@ function LogicBuilderContent() {
             };
             setNodes((nds) => nds.concat(newNode));
         },
-        [nodes, setNodes],
+        [nodes, setNodes, screenToFlowPosition],
     );
 
     const selectedNode = nodes.find(n => n.id === selectedNodeId);
@@ -462,17 +485,13 @@ const SidebarItem = ({ type, label, subLabel, actionType, icon: Icon, color }) =
     );
 };
 
-import { Zap, MapPin, Anchor, Radio, Shield, ArrowDownCircle } from 'lucide-react';
-
 const Sidebar = () => {
     return (
         <aside className="w-64 bg-surface border-r border-border flex flex-col h-full z-10">
             <div className="p-4 border-b border-border flex items-center gap-2">
-                <div className="w-6 h-6 bg-primary rounded-sm flex items-center justify-center">
-                    <Zap size={14} className="text-bg fill-current" />
-                </div>
+
                 <div>
-                    <h1 className="text-sm font-bold text-text-main tracking-wider">DRONE LOGIC</h1>
+                    <h1 className="text-sm font-bold text-text-main tracking-wider">Plivo Design Task</h1>
                     <p className="text-[10px] text-text-muted">PROTOCOL BUILDER</p>
                 </div>
             </div>
@@ -499,11 +518,7 @@ const Sidebar = () => {
                 </div>
             </div>
 
-            <div className="p-4 border-t border-border bg-bg/50">
-                <div className="text-[10px] text-text-muted text-center">
-                    v1.0.0 • Industrial Future UI
-                </div>
-            </div>
+
         </aside>
     );
 };

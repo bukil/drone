@@ -511,6 +511,10 @@ body {
   box-shadow: 0 0 15px rgba(0, 229, 255, 0.3);
 }
 
+.shadow-\[0_0_15px_rgba\(255\,42\,42\,0\.3\)\] {
+  box-shadow: 0 0 15px rgba(255, 42, 42, 0.3);
+}
+
 .transition-all {
   transition: all 0.2s ease;
 }
